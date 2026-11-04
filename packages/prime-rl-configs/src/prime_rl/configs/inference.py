@@ -324,6 +324,11 @@ class VllmRouterConfig(BaseConfig):
     health_failure_threshold: int | None = Field(None, ge=1)
     """Consecutive failed health checks before the router stops routing to an engine. None keeps the router's default (3)."""
 
+    disable_circuit_breaker: bool = False
+    """Turn off the router's circuit breaker, which stops routing to an engine for 60 s after 10 failed
+    sends in 120 s. With every engine on the node, a dead engine already stops the run, and an open
+    circuit fails every request in flight."""
+
 
 class LlmdRouterConfig(BaseConfig):
     """llm-d router backend (EPP + Envoy)."""

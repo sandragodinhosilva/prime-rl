@@ -192,6 +192,8 @@ def router_command(config: InferenceConfig) -> list[str]:
         cmd += ["--health-check-timeout-secs", str(config.router.health_check_timeout_secs)]
     if config.router.health_failure_threshold is not None:
         cmd += ["--health-failure-threshold", str(config.router.health_failure_threshold)]
+    if config.router.disable_circuit_breaker:
+        cmd += ["--disable-circuit-breaker"]
     return cmd
 
 
