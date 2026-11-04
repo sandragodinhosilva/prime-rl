@@ -162,8 +162,8 @@ def inference_slurm(config: InferenceConfig):
     logger.success(f"{result.stdout.strip()}\n\n{log_message}")
 
 
-def start_router(config: InferenceConfig) -> subprocess.Popen:
-    """Start the vllm-router on ``server.port``, fronting the local engine at ``backend_port``."""
+def router_command(config: InferenceConfig) -> list[str]:
+    """The vllm-router command line for ``config``."""
     assert config.router is not None and config.router.type == "vllm-router"
     host = config.server.host
     worker_host = "localhost" if host in (None, "0.0.0.0") else host
@@ -188,7 +188,16 @@ def start_router(config: InferenceConfig) -> subprocess.Popen:
         "--prometheus-port",
         str(config.server.port + 21000),
     ]
-    return subprocess.Popen(cmd)
+    if config.router.health_check_timeout_secs is not None:
+        cmd += ["--health-check-timeout-secs", str(config.router.health_check_timeout_secs)]
+    if config.router.health_failure_threshold is not None:
+        cmd += ["--health-failure-threshold", str(config.router.health_failure_threshold)]
+    return cmd
+
+
+def start_router(config: InferenceConfig) -> subprocess.Popen:
+    """Start the vllm-router on ``server.port``, fronting the local engine at ``backend_port``."""
+    return subprocess.Popen(router_command(config))
 
 
 def inference_local(config: InferenceConfig):
