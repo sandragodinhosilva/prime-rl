@@ -82,6 +82,9 @@ LLMD_EOF
 {%- if router.health_failure_threshold is not none %}
     cmd+=(--health-failure-threshold {{ router.health_failure_threshold }})
 {%- endif %}
+{%- if router.disable_circuit_breaker %}
+    cmd+=(--disable-circuit-breaker)
+{%- endif %}
     if [ "$mode" = pd ]; then
         cmd+=(--vllm-pd-disaggregation $worker_args)
     else
