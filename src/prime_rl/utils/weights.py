@@ -1,5 +1,6 @@
 import json
 import re
+import shutil
 import warnings
 from pathlib import Path
 from typing import Callable, cast
@@ -250,3 +251,26 @@ def save_state_dict_parallel(state_dict: dict[str, Tensor], save_dir: Path) -> N
         index_json = {"metadata": {"total_size": total_size}, "weight_map": weight_map}
         with open(save_dir / SAFE_WEIGHTS_INDEX_NAME, "w", encoding="utf-8") as f:
             f.write(json.dumps(index_json, indent=2, sort_keys=True) + "\n")
+
+
+def export_policy_weights(model: nn.Module, base_model: str, save_dir: Path) -> None:
+    """Save the policy as a servable HF checkpoint in ``save_dir``: the weights as the
+    filesystem broadcast writes them (every rank gathers and saves its slice), then the
+    base model's non-weight files (config, generation config, tokenizer), then a
+    ``.complete`` marker, so a reader that sees the marker sees a whole checkpoint."""
+    base_dir = Path(base_model)
+    if not base_dir.is_dir():
+        raise ValueError(f"weight export needs the base model as a local directory, got {base_model!r}")
+    world = get_world()
+    torch.cuda.synchronize()
+    torch.cuda.empty_cache()
+    state_dict = gather_weights_parallel(model)
+    state_dict = convert_state_dict_to_hf(model, state_dict)
+    save_state_dict_parallel(state_dict, save_dir)
+    del state_dict
+    if world.is_master:
+        for path in base_dir.iterdir():
+            if path.is_file() and path.suffix != ".safetensors" and path.name != SAFE_WEIGHTS_INDEX_NAME:
+                shutil.copy2(path, save_dir / path.name)
+        (save_dir / ".complete").touch()
+    dist.barrier()
