@@ -66,6 +66,7 @@ from prime_rl.trainer.parallel_dims import ParallelDims
 from prime_rl.trainer.world import get_world
 from prime_rl.utils.logger import get_logger
 from prime_rl.utils.utils import format_time
+from prime_rl.utils.olmo3_rope import patch_olmo3_rope
 from prime_rl.utils.vlm import get_language_model, get_vision_encoder, is_vlm_architecture
 from prime_rl.utils.weights import (
     load_state_dict,
@@ -352,6 +353,7 @@ def get_expert_load_stats(tokens_per_expert: Tensor, group: dist.ProcessGroup) -
 def get_model(
     config: ModelConfig, device: torch.device = torch.device("cpu"), dtype: torch.dtype = torch.bfloat16
 ) -> nn.Module:
+    patch_olmo3_rope()
     logger = get_logger()
     logger.debug(
         f"Loading model config (name={config.name}, attn={config.attn}, trust_remote_code={config.trust_remote_code})"
