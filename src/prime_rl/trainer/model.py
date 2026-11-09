@@ -1097,6 +1097,11 @@ def setup_model(
         applied = apply_model_fusions(model, config.fusions.enabled)
         logger.info(f"Applied runtime model fusions: {applied}")
 
+    if getattr(model.config, "model_type", None) == "gemma4":
+        from prime_rl.trainer.models.gemma4_router import patch_gemma4_router
+
+        patch_gemma4_router()
+
     if config.attn == "flash_attention_2" and getattr(model.config, "model_type", None) == "gemma4":
         from prime_rl.trainer.models.gemma4_global_attention import route_gemma4_global_attention
 
