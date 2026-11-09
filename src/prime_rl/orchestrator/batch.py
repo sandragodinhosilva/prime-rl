@@ -81,7 +81,9 @@ def _dense_ffn_hidden_size(config: Any) -> int:
 def _moe_ffn_hidden_size(config: Any) -> int:
     """Effective FFN width of an MoE layer: routed experts (topk) plus shared experts."""
     dense_ffn = _dense_ffn_hidden_size(config)
-    routed_topk = getattr(config, "moe_router_topk", getattr(config, "num_experts_per_tok", 1))
+    routed_topk = getattr(
+        config, "moe_router_topk", getattr(config, "num_experts_per_tok", getattr(config, "top_k_experts", 1))
+    )
     moe_ffn = getattr(config, "moe_ffn_hidden_size", getattr(config, "moe_intermediate_size", dense_ffn))
     return moe_ffn * routed_topk + (getattr(config, "moe_shared_expert_intermediate_size", None) or 0)
 
@@ -118,11 +120,10 @@ def _packing_cost_coeffs(config: Any) -> tuple[int, int]:
     def layer_linear(ffn_hidden_size: int) -> int:
         return qkv_per_token + 2 * hidden_size * hidden_size + _ffn_flops_per_token(hidden_size, ffn_hidden_size)
 
-    linear = (
-        num_dense_layers * layer_linear(_dense_ffn_hidden_size(config))
-        + num_moe_layers * layer_linear(_moe_ffn_hidden_size(config))
-        + 2 * hidden_size * config.vocab_size
-    )
+    # Dense configs may set the MoE fields to None (Gemma 4), so the MoE width is read only for MoE layers.
+    moe_linear = num_moe_layers * layer_linear(_moe_ffn_hidden_size(config)) if num_moe_layers else 0
+    dense_linear = num_dense_layers * layer_linear(_dense_ffn_hidden_size(config))
+    linear = dense_linear + moe_linear + 2 * hidden_size * config.vocab_size
     quadratic = (num_dense_layers + num_moe_layers) * attn_per_token_squared
     return linear, quadratic
 
