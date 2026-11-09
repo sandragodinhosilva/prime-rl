@@ -9,7 +9,9 @@ from prime_rl.trainer.models.layers.lm_head import (
     PrimeLmOutput,
     _online_logsumexp_and_weighted_update,
     _patch_model_forward,
+    _sampling_mask_local_indices,
     cross_entropy_sum,
+    sampling_replay_mask,
 )
 from prime_rl.utils.logger import get_logger
 
@@ -28,23 +30,25 @@ class GemmaFusedOutputLinear(torch.nn.Linear):
         sampling_mask: Tensor | None = None,
     ) -> PrimeLmOutput:
         assert labels is not None, "GemmaFusedOutputLinear requires labels for chunked logprob computation"
-        assert sampling_mask is None, "sampling-mask replay is not supported with Gemma softcapped lm_heads"
 
         b, s, h = hidden_states.shape
         hidden_states = hidden_states.reshape(b * s, h).contiguous()
         labels = labels.reshape(b * s).contiguous()
 
         if temperature is None:
+            assert sampling_mask is None, "sampling-mask replay requires per-token temperatures"
             # Summed cross-entropy through the logprob path; IGNORE_INDEX rows are masked at the sum.
             inv_t = torch.ones(b * s, device=hidden_states.device, dtype=torch.float32)
             logprobs, _ = _GemmaChunkedLogProbEntropyFn.apply(
-                hidden_states, self.weight, labels, inv_t, self.chunk_size, self.softcap
+                hidden_states, self.weight, labels, inv_t, self.chunk_size, self.softcap, None
             )
             return PrimeLmOutput(loss=-logprobs[labels != IGNORE_INDEX].sum())
 
         inv_t = 1.0 / temperature.reshape(b * s).contiguous()  # [N]
+        if sampling_mask is not None:
+            sampling_mask = sampling_mask.reshape(b * s, sampling_mask.shape[-1]).contiguous()
         logprobs, entropy = _GemmaChunkedLogProbEntropyFn.apply(
-            hidden_states, self.weight, labels, inv_t, self.chunk_size, self.softcap
+            hidden_states, self.weight, labels, inv_t, self.chunk_size, self.softcap, sampling_mask
         )
 
         logprobs = logprobs.reshape(b, s)
@@ -81,9 +85,14 @@ class _GemmaChunkedLogProbEntropyFn(torch.autograd.Function):
         inv_temperature: torch.Tensor,  # [N]
         chunk_size: int,
         softcap: float,
+        sampling_mask: torch.Tensor | None = None,  # [N, K] int32, -1-padded
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Returns per-token logprobs and entropy by chunking over flattened sequence tokens.
+
+        Positions with a usable ``sampling_mask`` (see ``sampling_replay_mask``) are renormalized over that
+        mask, on the softcapped and temperature-scaled logits. Other positions, and entropy, keep full-vocab
+        normalization, as in ``_SequenceChunkedLogProbEntropyFn``.
         """
         assert hidden.dim() == 2, f"expected hidden [N,H], got {tuple(hidden.shape)}"
         assert weight.dim() == 2, f"expected weight [V,H], got {tuple(weight.shape)}"
@@ -93,6 +102,10 @@ class _GemmaChunkedLogProbEntropyFn(torch.autograd.Function):
         assert hidden.shape[1] == weight.shape[1], "hidden/weight H mismatch"
         assert hidden.shape[0] == inv_temperature.shape[0], "hidden/inv_temperature N mismatch"
         assert chunk_size > 0
+        if sampling_mask is not None:
+            assert sampling_mask.dim() == 2 and sampling_mask.shape[0] == hidden.shape[0], (
+                f"expected sampling_mask [N,K], got {tuple(sampling_mask.shape)}"
+            )
 
         device = hidden.device
         n = hidden.shape[0]
@@ -101,6 +114,7 @@ class _GemmaChunkedLogProbEntropyFn(torch.autograd.Function):
         logprobs = torch.empty((n,), device=device, dtype=torch.float32)
         entropy = torch.empty((n,), device=device, dtype=torch.float32)
         logz = torch.empty((n,), device=device, dtype=torch.float32)
+        replay = torch.zeros((n,), device=device, dtype=torch.bool) if sampling_mask is not None else None
 
         for start in range(0, n, chunk_size):
             end = min(start + chunk_size, n)
@@ -114,6 +128,11 @@ class _GemmaChunkedLogProbEntropyFn(torch.autograd.Function):
             t = torch.zeros((token_count,), device=device, dtype=torch.float32)
             target_logits = torch.zeros((token_count,), device=device, dtype=torch.float32)
 
+            mask_chunk = sampling_mask[start:end].to(torch.long) if sampling_mask is not None else None
+            if mask_chunk is not None:
+                replay_chunk = sampling_replay_mask(mask_chunk, labels_chunk)
+                mask_logits = torch.full_like(mask_chunk, float("-inf"), dtype=torch.float32)
+
             for vocab_start in range(0, vocab, vocab_chunk_size):
                 vocab_end = min(vocab_start + vocab_chunk_size, vocab)
                 weight_chunk = weight[vocab_start:vocab_end]
@@ -124,17 +143,26 @@ class _GemmaChunkedLogProbEntropyFn(torch.autograd.Function):
 
                 m, s, t = _online_logsumexp_and_weighted_update(m, s, t, scaled_logits)
 
+                if mask_chunk is not None:
+                    mask_local, mask_in_range = _sampling_mask_local_indices(mask_chunk, vocab_start, vocab_end)
+                    mask_logits = torch.where(mask_in_range, scaled_logits.gather(1, mask_local), mask_logits)
+
                 mask = (labels_chunk >= vocab_start) & (labels_chunk < vocab_end)
                 if torch.any(mask):
                     idx = (labels_chunk[mask] - vocab_start).to(torch.long)
                     target_logits[mask] = scaled_logits[mask, idx]
 
-            logz_chunk = m + torch.log(s)
+            logz_full = m + torch.log(s)
+            if mask_chunk is not None:
+                logz_chunk = torch.where(replay_chunk, torch.logsumexp(mask_logits, dim=-1), logz_full)
+                replay[start:end] = replay_chunk
+            else:
+                logz_chunk = logz_full
             logz[start:end] = logz_chunk
             logprobs[start:end] = target_logits - logz_chunk
-            entropy[start:end] = logz_chunk - (t / s)
+            entropy[start:end] = logz_full - (t / s)
 
-        ctx.save_for_backward(hidden, weight, labels, inv_temperature, logz)
+        ctx.save_for_backward(hidden, weight, labels, inv_temperature, logz, sampling_mask, replay)
         ctx.chunk_size = chunk_size
         ctx.softcap = softcap
 
@@ -146,7 +174,7 @@ class _GemmaChunkedLogProbEntropyFn(torch.autograd.Function):
             "Backward through entropy is not implemented in GemmaFusedOutputLinear"
         )
 
-        hidden, weight, labels, inv_temperature, logz = ctx.saved_tensors
+        hidden, weight, labels, inv_temperature, logz, sampling_mask, replay = ctx.saved_tensors
         chunk_size: int = ctx.chunk_size
         softcap: float = ctx.softcap
 
@@ -164,6 +192,8 @@ class _GemmaChunkedLogProbEntropyFn(torch.autograd.Function):
             grad_chunk = grad_logprobs[start:end].to(torch.float32)
             inv_t_chunk = inv_temperature[start:end].unsqueeze(-1)
             logz_chunk = logz[start:end]
+            mask_chunk = sampling_mask[start:end].to(torch.long) if sampling_mask is not None else None
+            replay_chunk = replay[start:end] if replay is not None else None
 
             for vocab_start in range(0, vocab, vocab_chunk_size):
                 vocab_end = min(vocab_start + vocab_chunk_size, vocab)
@@ -173,6 +203,14 @@ class _GemmaChunkedLogProbEntropyFn(torch.autograd.Function):
                 tanh_val = torch.tanh(logits_f / softcap)
                 scaled_logits = softcap * tanh_val
                 scaled_logits = scaled_logits * inv_t_chunk
+                if mask_chunk is not None:
+                    # Replayed rows get softmax gradient only on mask ids; -inf before exp avoids overflow, as in
+                    # _SequenceChunkedLogProbEntropyFn.
+                    local, in_range = _sampling_mask_local_indices(mask_chunk, vocab_start, vocab_end)
+                    mask_indicator = torch.zeros(scaled_logits.shape, dtype=torch.int8, device=scaled_logits.device)
+                    mask_indicator.scatter_add_(1, local, in_range.to(torch.int8))
+                    masked_out = replay_chunk.unsqueeze(-1) & (mask_indicator == 0)
+                    scaled_logits.masked_fill_(masked_out, float("-inf"))
                 probs = torch.exp(scaled_logits - logz_chunk.unsqueeze(-1))
 
                 grad_logits = (-grad_chunk).unsqueeze(-1) * probs
@@ -186,7 +224,7 @@ class _GemmaChunkedLogProbEntropyFn(torch.autograd.Function):
                 grad_hidden[start:end].add_(grad_logits.to(hidden.dtype) @ weight_chunk)
                 grad_weight[vocab_start:vocab_end].add_(grad_logits.to(weight.dtype).t() @ hidden_chunk)
 
-        return grad_hidden, grad_weight, None, None, None, None
+        return grad_hidden, grad_weight, None, None, None, None, None
 
 
 def inject_gemma_lm_head(model: nn.Module, chunk_size: int | None, softcap: float) -> None:
