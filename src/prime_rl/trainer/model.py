@@ -1097,6 +1097,12 @@ def setup_model(
         applied = apply_model_fusions(model, config.fusions.enabled)
         logger.info(f"Applied runtime model fusions: {applied}")
 
+    if config.attn == "flash_attention_2" and getattr(model.config, "model_type", None) == "gemma4":
+        from prime_rl.trainer.models.gemma4_global_attention import route_gemma4_global_attention
+
+        route_gemma4_global_attention()
+        logger.info("Gemma 4 global attention layers run packed sdpa; FlashAttention 2 stops at head_dim 256")
+
     lm_head_chunk_size: int | None = None
     if isinstance(config.fused_lm_head_token_chunk_size, int):
         lm_head_chunk_size = config.fused_lm_head_token_chunk_size
