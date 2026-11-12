@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 from torch.nn import Module
 from vllm.model_executor.model_loader import DefaultModelLoader, get_model_loader
 
-from prime_rl.inference.vllm.worker.weight_transfer import load_weights_checkpoint_layerwise
+from prime_rl.inference.vllm.worker.weight_transfer import load_weights_checkpoint_layerwise, step_of
 
 # This is to get type hints for the Worker class but not actually extend it at runtime as this is required by vLLM worker extension
 if TYPE_CHECKING:
@@ -53,3 +53,9 @@ class FileSystemWeightUpdateWorker(Worker):
             self.model_runner.model_config,
             self.vllm_config,
         )
+        self._weight_version = step_of(weight_path)
+
+    def weight_version(self) -> int | None:
+        """The policy step of the weights this worker holds: 0 until the first update, then the step of the last update's
+        directory (``step_of``), None if its name carries no step."""
+        return getattr(self, "_weight_version", 0)

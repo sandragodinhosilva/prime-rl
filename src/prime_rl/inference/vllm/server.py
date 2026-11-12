@@ -57,6 +57,23 @@ async def update_weights(request: Request):
     return {"status": "ok"}
 
 
+@router.get("/weight_version")
+async def weight_version(request: Request):
+    """The policy step of the weights being served, for a client that keys a vLLM ``cache_salt`` on it (spb self live: the judge
+    is the policy's own server, which keeps its prefix cache across weight updates). 503 while generation is paused, since an
+    update may be under way and a call keyed on the old step would run under the new weights; the client retries. 503 too if the
+    workers disagree (one engine updated, another not yet); 409 if an update's directory carried no step."""
+    client = engine_client(request)
+    if await client.is_paused():
+        return JSONResponse({"error": "generation paused: the weights may be changing"}, status_code=503)
+    versions = await client.collective_rpc("weight_version")
+    if len(set(versions)) != 1:
+        return JSONResponse({"error": f"workers hold different weight versions: {sorted(set(versions), key=str)}"}, status_code=503)
+    if versions[0] is None:
+        return JSONResponse({"error": "the last weight update's directory carried no step"}, status_code=409)
+    return {"version": versions[0]}
+
+
 @router.post("/load_lora_adapter")
 async def load_lora_adapter(lora_request: LoadLoRAAdapterRequest, raw_request: Request):
     """Wrapper around vLLM's /v1/load_lora_adapter.

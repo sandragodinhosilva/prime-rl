@@ -7,7 +7,7 @@ from vllm.distributed.device_communicators.pynccl import PyNcclCommunicator
 from vllm.distributed.utils import StatelessProcessGroup
 from vllm.logger import init_logger
 
-from prime_rl.inference.vllm.worker.weight_transfer import load_weights_checkpoint_layerwise
+from prime_rl.inference.vllm.worker.weight_transfer import load_weights_checkpoint_layerwise, step_of
 from prime_rl.utils.nccl import disable_nccl_p2p_if_unavailable, iter_tensor_buckets
 
 # This is to get type hints for the Worker class but not actually extend it at runtime as this is required by vLLM worker extension
@@ -147,3 +147,9 @@ class NCCLWeightUpdateWorker(Worker):
             self.model_runner.model_config,
             self.vllm_config,
         )
+        self._weight_version = step_of(weight_dir)
+
+    def weight_version(self) -> int | None:
+        """The policy step of the weights this worker holds: 0 until the first update, then the step of the last update's
+        directory (``step_of``), None if its name carries no step."""
+        return getattr(self, "_weight_version", 0)

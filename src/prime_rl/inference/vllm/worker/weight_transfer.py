@@ -9,6 +9,16 @@ from vllm.model_executor.model_loader.reload import finalize_layerwise_reload, i
 logger = init_logger("vllm.inference.vllm.worker_weight_transfer")
 
 
+def step_of(weight_dir: str | None) -> int | None:
+    """The policy step in an update's directory name (``step_<N>``, as the orchestrator's weight transports name it), or None.
+    Workers keep it as their weight version (``weight_version`` RPC, server ``GET /weight_version``), so a client can key a vLLM
+    ``cache_salt`` on the weights that serve it, e.g. a judge served by the policy's own server (spb self live)."""
+    if not weight_dir:
+        return None
+    name = weight_dir.rstrip("/").rsplit("/", 1)[-1]
+    return int(name[5:]) if name.startswith("step_") and name[5:].isdigit() else None
+
+
 def load_weights_checkpoint_layerwise(
     model: Module,
     state_iter: Iterable[tuple[str, torch.Tensor]],

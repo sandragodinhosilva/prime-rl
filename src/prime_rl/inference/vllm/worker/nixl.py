@@ -17,7 +17,7 @@ from modelexpress.client import MxClient
 from vllm.config import set_current_vllm_config
 from vllm.logger import init_logger
 
-from prime_rl.inference.vllm.worker.weight_transfer import update_mla_absorbed_weights
+from prime_rl.inference.vllm.worker.weight_transfer import step_of, update_mla_absorbed_weights
 from prime_rl.transports.weights.nixl.agent import (
     MemDesc,
     NixlAgent,
@@ -475,6 +475,7 @@ class NIXLWeightUpdateWorker(Worker):
 
     @torch.no_grad()
     def update_weights_from_path(self, weight_dir: str | None = None) -> None:
+        version = step_of(weight_dir)
         del weight_dir
         plan = self.initialize_transfer()
 
@@ -487,6 +488,12 @@ class NIXLWeightUpdateWorker(Worker):
             self.model_express.rank,
             time.perf_counter() - started,
         )
+        self._weight_version = version
+
+    def weight_version(self) -> int | None:
+        """The policy step of the weights this worker holds: 0 until the first update, then the step of the last update's
+        directory (``step_of``), None if its name carries no step."""
+        return getattr(self, "_weight_version", 0)
 
     def apply_transfer_plan(self, plan: WeightTransferPlan) -> None:
         from vllm.model_executor.layers.quantization.base_config import QuantizeMethodBase
