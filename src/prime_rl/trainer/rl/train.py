@@ -97,6 +97,7 @@ from prime_rl.utils.pathing import (
     write_resolved_config,
 )
 from prime_rl.utils.utils import clean_exit
+from prime_rl.utils.weights import export_policy_weights
 
 
 def sparse_head_backward(micro_batch: TensorMicroBatch) -> bool:
@@ -763,6 +764,16 @@ def train(config: TrainerConfig):
         else:
             save_ckpt_time = 0
 
+        # Servable copy of policy v{progress.step}, for evals on separate GPUs
+        if config.weight_export is not None and progress.step % config.weight_export.interval == 0:
+            export_dir = config.output_dir / "weights" / f"step_{progress.step}"
+            logger.info(f"Exporting policy weights to {export_dir}")
+            export_weights_start_time = time.perf_counter()
+            export_policy_weights(model, config.model.name, export_dir)
+            export_weights_time = time.perf_counter() - export_weights_start_time
+        else:
+            export_weights_time = 0
+
         # Optionally, dump memory snapshot
         if memory_profiler is not None:
             memory_profiler.step()
@@ -846,6 +857,7 @@ def train(config: TrainerConfig):
             "payload/dropped_micro_batches": dropped_micro_batches,
             "time/broadcast_weights": broadcast_weights_time,
             "time/save_ckpt": save_ckpt_time,
+            "time/export_weights": export_weights_time,
             "time/forward_backward": forward_backward_time,
             "step": progress.step,
         }

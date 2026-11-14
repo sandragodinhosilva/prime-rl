@@ -761,6 +761,16 @@ class BaseTrainerConfig(BaseConfig):
         return self
 
 
+class WeightExportConfig(BaseConfig):
+    """Save the policy as a servable Hugging Face checkpoint: bf16 safetensors plus the base
+    model's config and tokenizer files, no optimizer state. Lets evals run against each saved
+    policy on their own GPUs instead of the training inference pool."""
+
+    interval: int = Field(10, ge=1)
+    """Save the policy every N steps, at ``<output_dir>/weights/step_N``, including the last
+    step when it is a multiple of N. A ``.complete`` marker is written last."""
+
+
 class TrainerConfig(BaseTrainerConfig):
     # RL keeps the pretrained router.
     auto_freeze_moe_router = True
@@ -777,6 +787,9 @@ class TrainerConfig(BaseTrainerConfig):
 
     weight_broadcast: WeightBroadcastConfig = FileSystemWeightBroadcastConfig()
     """Transport used to broadcast updated weights from trainer to inference."""
+
+    weight_export: WeightExportConfig | None = None
+    """Periodic servable copies of the policy weights. If None, none are written."""
 
     rollout_transport: TransportConfig = ZMQTransportConfig()
     """Transport used to ship rollouts from orchestrator to trainer."""
