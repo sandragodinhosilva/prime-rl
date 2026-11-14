@@ -669,6 +669,17 @@ class WeightExportConfig(BaseConfig):
     """Save the policy every N steps, at ``<output_dir>/weights/step_N``, including the last
     step when it is a multiple of N. A ``.complete`` marker is written last."""
 
+    async_save: bool = False
+    """Write the export's files on a background thread per rank while training goes on. The
+    gather and the HF conversion still run in the training step (they are collectives); the
+    next export, a checkpoint save and the trainer's exit first wait for the files in flight,
+    so at most one export is pending. The files and ``.complete`` (still last) are the same
+    as without it."""
+
+    sync_check: bool = False
+    """Debug, for the async_save equality check: before each export, also write the same step
+    synchronously to ``<output_dir>/weights_sync_check/step_N``. Doubles the export cost."""
+
 
 class TrainerConfig(BaseConfig):
     model: ModelConfig = ModelConfig()

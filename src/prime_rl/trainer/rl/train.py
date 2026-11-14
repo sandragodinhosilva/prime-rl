@@ -73,7 +73,7 @@ from prime_rl import monitors
 from prime_rl.utils.config import cli
 from prime_rl.utils.process import set_proc_title
 from prime_rl.utils.utils import clean_exit, resolve_latest_ckpt_step
-from prime_rl.utils.weights import export_policy_weights
+from prime_rl.utils.weights import export_policy_weights, wait_for_weight_export
 
 
 @clean_exit
@@ -626,6 +626,7 @@ def train(config: TrainerConfig):
         ):
             logger.info(f"Saving checkpoint at step {progress.step}")
             save_ckpt_start_time = time.perf_counter()
+            wait_for_weight_export()
             ckpt_manager.save(progress.step, model, [optimizer], scheduler, progress)
             save_ckpt_time = time.perf_counter() - save_ckpt_start_time
 
@@ -638,7 +639,11 @@ def train(config: TrainerConfig):
             export_dir = config.output_dir / "weights" / f"step_{progress.step}"
             logger.info(f"Exporting policy weights to {export_dir}")
             export_weights_start_time = time.perf_counter()
-            export_policy_weights(model, config.model.name, export_dir)
+            if config.weight_export.sync_check:
+                sync_dir = config.output_dir / "weights_sync_check" / f"step_{progress.step}"
+                logger.info(f"Exporting policy weights synchronously to {sync_dir} (sync_check)")
+                export_policy_weights(model, config.model.name, sync_dir)
+            export_policy_weights(model, config.model.name, export_dir, async_save=config.weight_export.async_save)
             export_weights_time = time.perf_counter() - export_weights_start_time
         else:
             export_weights_time = 0
@@ -759,6 +764,10 @@ def train(config: TrainerConfig):
         logger.info(f"Saving trace to {trace_file}")
         prof.export_chrome_trace(trace_file)
         logger.info(f"Saved trace to {trace_file}")
+
+    # The last asynchronous export's files must be written before the final checkpoint and
+    # before the trainer exits.
+    wait_for_weight_export()
 
     # Write final checkpoint
     if config.ckpt is not None:
