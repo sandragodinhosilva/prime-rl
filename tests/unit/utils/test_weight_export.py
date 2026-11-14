@@ -241,3 +241,40 @@ def test_wait_for_weight_export_joins_and_reraises(monkeypatch):
     monkeypatch.setattr(weights, "_pending_export", failed)
     with pytest.raises(RuntimeError, match="step_20"):
         weights.wait_for_weight_export()
+
+
+def test_a_reexport_drops_the_stale_marker_before_writing(tmp_path: Path, base_dir: Path, monkeypatch):
+    """A resumed run exports a step again into a directory whose .complete vouches for the old files:
+    the marker goes before the first new byte is written and comes back only at the end."""
+    import socket
+
+    import torch.distributed as dist
+
+    import prime_rl.utils.weights as weights
+
+    save_dir = tmp_path / "step_3"
+    save_dir.mkdir()
+    (save_dir / "model.safetensors").write_bytes(b"old weights")
+    (save_dir / ".complete").touch()
+    marker_seen: list[bool] = []
+    original = weights.write_rank_shards
+
+    def spy(*args, **kwargs):
+        marker_seen.append((save_dir / ".complete").exists())
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(weights, "write_rank_shards", spy)
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    dist.init_process_group("gloo", rank=0, world_size=1, init_method=f"tcp://127.0.0.1:{port}")
+    try:
+        new = _slices(world_size=1)[0]
+        weights._start_async_export(dict(new), save_dir, base_dir)
+        weights.wait_for_weight_export()
+    finally:
+        dist.destroy_process_group()
+    assert marker_seen == [False]
+    assert (save_dir / ".complete").exists() and not (save_dir / HANDSHAKE_DIR).exists()
+    loaded = load_file(save_dir / "model.safetensors")
+    assert loaded.keys() == new.keys() and all(torch.equal(loaded[k], v) for k, v in new.items())
