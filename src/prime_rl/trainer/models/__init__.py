@@ -7,6 +7,7 @@ from transformers.configuration_utils import PretrainedConfig
 from transformers.models.auto.auto_factory import _BaseAutoModelClass, _LazyAutoMapping, auto_class_update
 from transformers.models.auto.configuration_auto import CONFIG_MAPPING_NAMES
 from transformers.models.llama.configuration_llama import LlamaConfig
+from transformers.models.olmo3.configuration_olmo3 import Olmo3Config
 from transformers.models.qwen3.configuration_qwen3 import Qwen3Config
 
 from prime_rl.trainer.models.afmoe import AfmoeConfig, AfmoeForCausalLM
@@ -21,6 +22,7 @@ from prime_rl.trainer.models.layers.lm_head import PrimeLmOutput, cast_float_and
 from prime_rl.trainer.models.llama import LlamaForCausalLM
 from prime_rl.trainer.models.minimax_m2 import MiniMaxM2Config, MiniMaxM2ForCausalLM
 from prime_rl.trainer.models.muse_glimmer import MuseGlimmerConfig, MuseGlimmerForCausalLM, MuseGlimmerTextConfig
+from prime_rl.trainer.models.olmo3 import Olmo3ForCausalLM
 from prime_rl.trainer.models.nemotron_h import NemotronHConfig, NemotronHForCausalLM, NemotronHOmniConfig
 from prime_rl.trainer.models.qwen3 import Qwen3ForCausalLM
 from prime_rl.trainer.models.qwen3_5 import (
@@ -68,6 +70,7 @@ _CUSTOM_CAUSAL_LM_MODELS: tuple[
 ] = (
     (LlamaConfig, LlamaForCausalLM),
     (Qwen3Config, Qwen3ForCausalLM),
+    (Olmo3Config, Olmo3ForCausalLM),
     (AfmoeConfig, AfmoeForCausalLM),
     (DeepseekV4Config, DeepseekV4ForCausalLM),
     (Glm4MoeConfig, Glm4MoeForCausalLM),
