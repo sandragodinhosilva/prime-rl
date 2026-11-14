@@ -476,6 +476,8 @@ class NIXLWeightUpdateWorker(WeightRPCMixin, Worker):
     @torch.no_grad()
     def update_weights_from_path(self, weight_dir: str | None = None) -> None:
         del weight_dir
+        # NIXL updates carry no step directory: GET /weight_version answers 409 (no version known)
+        self._weight_version = None
         plan = self.initialize_transfer()
 
         started = time.perf_counter()

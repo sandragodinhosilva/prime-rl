@@ -5,6 +5,7 @@ from prime_rl.inference.vllm.worker.weight_transfer import (
     checkpoint_weights,
     get_weight_model,
     load_weights_checkpoint_layerwise,
+    step_of,
 )
 
 # This is to get type hints for the Worker class but not actually extend it at runtime as this is required by vLLM worker extension
@@ -28,3 +29,4 @@ class FileSystemWeightUpdateWorker(WeightRPCMixin, Worker):
         model = get_weight_model(self.model_runner, "model")
         weights = checkpoint_weights(model, weight_path, self.load_config)
         load_weights_checkpoint_layerwise(model, weights, self.model_runner.model_config, self.vllm_config)
+        self._weight_version = step_of(weight_path)

@@ -47,8 +47,23 @@ def target_owned_storage(model_runner) -> set[int]:
     }
 
 
+def step_of(weight_dir: str | None) -> int | None:
+    """The policy step in an update's directory name (``step_<N>``, as the orchestrator's weight transports name it), or None.
+    Workers keep it as their weight version (``weight_version`` RPC, server ``GET /weight_version``), so a client can key a vLLM
+    ``cache_salt`` on the weights that serve it, e.g. a judge served by the policy's own server (spb self live)."""
+    if not weight_dir:
+        return None
+    name = weight_dir.rstrip("/").rsplit("/", 1)[-1]
+    return int(name[5:]) if name.startswith("step_") and name[5:].isdigit() else None
+
+
 class WeightRPCMixin:
     """Weight RPCs shared by every weight-transport worker extension."""
+
+    def weight_version(self) -> int | None:
+        """The policy step of the weights this worker holds: 0 until the first update, then the step of the last update's
+        directory (``step_of``), None if its name carries no step."""
+        return getattr(self, "_weight_version", 0)
 
     def update_draft_weights(self, weight_dir: str) -> None:
         """Load a draft checkpoint from disk, independent of the policy weight transport. The checkpoint is read
