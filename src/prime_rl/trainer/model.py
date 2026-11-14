@@ -531,6 +531,20 @@ def setup_fsdp(model: nn.Module, config: ModelConfig, parallel_dims: ParallelDim
                 ),
             }
 
+        if config.moe_router_dtype == "float32" and isinstance(block_mlp, MoE):
+            # Own FSDP unit with an fp32 policy, so the gate weight is not cast to bf16 for forward and its
+            # gradients reduce in fp32; FP32Linear then runs the gate GEMM in fp32 (spb port of the pre-#4177 router).
+            fully_shard(
+                block_mlp.router,
+                mesh=hsdp_mesh,
+                mp_policy=MixedPrecisionPolicy(param_dtype=torch.float32, reduce_dtype=torch.float32),
+                offload_policy=offload_policy,
+                reshard_after_forward=config.reshard_after_forward,
+                shard_placement_fn=shard_placement_fn,
+            )
+            # Keep the router reduction from waiting for the expert reduction's input buffer.
+            block_mlp.router.set_reduce_scatter_max_input_buffers(2)
+
         fully_shard(
             transformer_block,
             mesh=hsdp_mesh,
@@ -966,6 +980,14 @@ def setup_model(
 
     if config.freeze_moe_router:
         freeze_moe_router(model)
+
+    if config.moe_router_dtype == "float32":
+        num_routers = 0
+        for moe in iter_moe_blocks(model):
+            moe.router.to(torch.float32)
+            num_routers += 1
+        if num_routers:
+            get_logger().info(f"Running {num_routers} MoE router gates in fp32 (own FSDP units)")
 
     # A sparse-attention indexer runs its forward under torch.no_grad(), so it is never
     # trainable. Freeze it so optimizer state stays symmetric across checkpoint save/resume.

@@ -386,6 +386,12 @@ class ModelConfig(BaseModelConfig):
     dsv4_kv_precision: Literal["bf16", "fp8"] = "fp8"
     """Precision DeepSeek V4 attention reads keys and values at. ``fp8`` rounds them as vLLM's ``fp8_ds_mla`` KV cache stores them, with a straight-through gradient."""
 
+    moe_router_dtype: Literal["bfloat16", "float32"] = "bfloat16"
+    """Operand dtype of the MoE router gate GEMM. ``bfloat16`` (upstream since #4177): BF16 operands with an FP32 output.
+    ``float32`` (spb port of the pre-#4177 behaviour): each router is its own FSDP unit with an fp32 parameter and reduce
+    policy, so the gate weight is not cast to bf16 for forward and backward and the gate GEMM runs in fp32. Not with
+    ``compile.fullgraph`` (dynamo cannot trace the nested unit's FSDP hooks). A no-op for non-MoE models."""
+
     freeze_moe_router: bool | Literal["auto"] = "auto"
     """Freeze MoE router gate parameters. ``auto`` (default): ``True`` for RL, ``False`` for SFT; a no-op on non-MoE models. Frozen routers get no optimizer state, so resuming a checkpoint saved with a frozen router with ``freeze_moe_router=false`` fails on missing DCP keys."""
 
@@ -402,6 +408,15 @@ class ModelConfig(BaseModelConfig):
     def validate_init_from(self):
         if self.init_from is not None:
             validate_step_dir(self.init_from, field="model.init_from")
+        return self
+
+    @model_validator(mode="after")
+    def validate_fp32_router_compile(self):
+        if self.moe_router_dtype == "float32" and self.compile is not None and self.compile.fullgraph:
+            raise ValueError(
+                "model.compile.fullgraph=true requires model.moe_router_dtype='bfloat16': the fp32 router is its own FSDP "
+                "unit inside the compiled block, and dynamo cannot trace FSDP hooks."
+            )
         return self
 
     @model_validator(mode="after")
