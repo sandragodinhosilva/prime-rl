@@ -67,6 +67,7 @@ from prime_rl.trainer.world import get_world
 from prime_rl.utils.logger import get_logger
 from prime_rl.utils.utils import format_time
 from prime_rl.utils.olmo3_rope import patch_olmo3_rope
+from prime_rl.utils.olmo3_tokenizer import patch_olmo3_tokenizer
 from prime_rl.utils.vlm import get_language_model, get_vision_encoder, is_vlm_architecture
 from prime_rl.utils.weights import (
     load_state_dict,
@@ -514,6 +515,7 @@ def get_model(
 
 def setup_tokenizer(config: TokenizerConfig) -> PreTrainedTokenizer:
     logger = get_logger()
+    patch_olmo3_tokenizer()
     tokenizer = AutoTokenizer.from_pretrained(config.name, trust_remote_code=config.trust_remote_code)
     if config.chat_template is not None:
         path = Path(config.chat_template)

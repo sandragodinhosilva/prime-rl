@@ -11,7 +11,9 @@ def apply_shared_vllm_patches():
     """
     from prime_rl.inference.vllm.gpt_oss_weight_loading import patch_gpt_oss_weight_loading
     from prime_rl.inference.vllm.qwen38_weight_loading import patch_qwen38_weight_loading
+    from prime_rl.utils.olmo3_tokenizer import patch_olmo3_tokenizer
 
+    patch_olmo3_tokenizer()
     patch_gpt_oss_weight_loading()
     patch_qwen38_weight_loading()
     _patch_lora_key_prefix()
