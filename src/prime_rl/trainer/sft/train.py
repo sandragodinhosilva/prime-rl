@@ -518,6 +518,8 @@ def train(config: SFTConfig):
         if config.optim.max_norm is not None:
             logger.debug(f"Clipping gradients with max norm {config.optim.max_norm}")
             grad_norm = clip_grad_norm_(gradient_manager, model, config.optim.max_norm)
+        # An async checkpoint must finish copying the state before the optimizer step mutates it
+        ckpt_manager.wait_for_staging()
         logger.debug("Optimizer step")
         optimizer.step()
         optimizer.zero_grad()
@@ -677,6 +679,7 @@ def train(config: SFTConfig):
     if config.ckpt is not None:
         logger.info(f"Saving final checkpoint at step {progress.step}")
         ckpt_manager.save(progress.step, model, [optimizer], scheduler, progress, dataloader=dataloader)
+        ckpt_manager.wait()  # the final checkpoint must be on storage before the trainer exits
         ckpt_manager.maybe_clean()
 
     # Broadcast the final weights so the evals process can run its forced final epoch
