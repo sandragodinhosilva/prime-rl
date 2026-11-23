@@ -1,3 +1,4 @@
+import json
 import uuid
 from collections.abc import Iterator
 from types import SimpleNamespace
@@ -161,6 +162,23 @@ def test_difficulty_pools_stack_with_advantage_gate_and_resume_sampling() -> Non
     restored = Curriculum(config, tasks)
     restored.load_state_dict(state)
     assert [next(restored.sampler).key for _ in range(10)] == expected
+
+
+def test_difficulty_pool_initial_state_seeds_pools_and_rejects_unknown_keys(tmp_path) -> None:
+    tasks = [make_task(i) for i in range(3)]
+    pools = {
+        "learnable": DifficultyPoolConfig(threshold=0.999, weight=1.0),
+        "solved": DifficultyPoolConfig(threshold=1.0, weight=0.0),
+    }
+    state_file = tmp_path / "pool_state.json"
+    state_file.write_text(json.dumps({"task_rewards": {tasks[0].key: 1.0, tasks[1].key: 0.5}}))
+    curriculum = Curriculum(CurriculumConfig(sampler=DifficultyPoolSamplerConfig(pools=pools, initial_state=state_file)), tasks)
+    assert curriculum.metrics() == {"sampler/pool/unseen": 1.0, "sampler/pool/learnable": 1.0, "sampler/pool/solved": 1.0}
+    assert tasks[0].key not in {next(curriculum.sampler).key for _ in range(50)}
+
+    state_file.write_text(json.dumps({"task_rewards": {"no-such-task": 1.0}}))
+    with pytest.raises(ValueError, match="outside the taskset"):
+        Curriculum(CurriculumConfig(sampler=DifficultyPoolSamplerConfig(pools=pools, initial_state=state_file)), tasks)
 
 
 def test_advantage_range_gate_generalizes_zero_advantage_rejection() -> None:

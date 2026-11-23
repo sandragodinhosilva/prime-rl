@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import random
 from collections import Counter
 from collections.abc import Iterator, Sequence
@@ -43,6 +44,16 @@ class DifficultyPoolSampler(TaskSampler):
         ordered = sorted(self.pools.items(), key=lambda item: item[1].threshold)
         self._ordered_pools = tuple(ordered)
         self.task_rewards: dict[str, float] = {}
+        if config.initial_state is not None:
+            with open(config.initial_state) as f:
+                initial = json.load(f)["task_rewards"]
+            unknown = sorted(set(initial) - set(self.tasks_by_key))
+            if unknown:
+                raise ValueError(
+                    f"initial_state {config.initial_state} has {len(unknown)} task keys outside the taskset, "
+                    f"e.g. {unknown[:3]}"
+                )
+            self.task_rewards = {key: float(value) for key, value in initial.items()}
 
     def task_pool(self, task_key: str) -> str | None:
         """Return the task's current pool, or ``None`` until it has a score."""

@@ -252,6 +252,11 @@ class DifficultyPoolSamplerConfig(BaseConfig):
 
     seed: int = 42
 
+    initial_state: Path | None = None
+    """JSON file whose `task_rewards` (task key -> latest group mean) seed the sampler at start, for a run that
+    restarts from another run's weights without its orchestrator checkpoint. Every key must be a task of the
+    taskset. A resume from this run's own checkpoint replaces it with the saved state."""
+
     @model_validator(mode="after")
     def validate_pools(self):
         if not self.pools:
